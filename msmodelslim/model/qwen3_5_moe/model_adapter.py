@@ -42,6 +42,7 @@ from msmodelslim.model.common.layer_wise_forward import generated_decoder_layer_
 from msmodelslim.model.interface_hub import IterSmoothInterface, FlexSmoothQuantInterface, ModelSlimPipelineInterfaceV1
 from msmodelslim.model.common.vlm_base import VLMBaseModelAdapter
 from msmodelslim.infra.dataset_loader.vlm_dataset_loader import VlmCalibSample
+from msmodelslim.processor.quarot import QuaRotInterface
 from msmodelslim.utils.exception import InvalidModelError, UnsupportedError
 from msmodelslim.utils.logging import logger_setter, get_logger
 from msmodelslim.utils.security import get_valid_read_path, json_safe_load, MAX_READ_FILE_SIZE_512G
@@ -78,7 +79,8 @@ def default_dtype(dtype):
 
 @logger_setter()
 class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
-    VLMBaseModelAdapter, ModelInfoInterface, ModelSlimPipelineInterfaceV1, IterSmoothInterface, FlexSmoothQuantInterface
+    VLMBaseModelAdapter, ModelInfoInterface, ModelSlimPipelineInterfaceV1, IterSmoothInterface,
+    FlexSmoothQuantInterface, QuaRotInterface
 ):
     """
     V1 Framework adapter for Qwen3-VL-MoE models.
@@ -309,16 +311,19 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
         else:
             sample = inputs
 
-        # 2. Vision encoder forward
-        pixel_values = sample['pixel_values']
-        image_grid_thw = sample['image_grid_thw']
+        # 2. Vision encoder forward (optional for text-only calibration;
+        #    W4A8 campaign patch ported verbatim from 26.1.0)
+        pixel_values = sample.get('pixel_values')
+        image_grid_thw = sample.get('image_grid_thw')
+        image_embeds = None
 
-        # Yield vision encoder result
-        vision_outputs = yield ProcessRequest(
-            name="model.visual", module=model.model.visual, args=(pixel_values, image_grid_thw), kwargs={}
-        )
-
-        image_embeds = vision_outputs['pooler_output']
+        if pixel_values is not None:
+            vision_outputs = yield ProcessRequest(
+                name="model.visual", module=model.model.visual, args=(pixel_values, image_grid_thw), kwargs={}
+            )
+            image_embeds = vision_outputs['pooler_output']
+        else:
+            get_logger().info("Text-only calibration path: skipping vision encoder forward.")
 
         # 3. Prepare inputs for text decoder
         input_ids = sample['input_ids']
@@ -329,21 +334,30 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
 
         # CRITICAL: Merge visual features into text embeddings
         # This mimics Qwen3VLMoeModel.forward (lines 1320-1358)
-        if isinstance(image_embeds, (list, tuple)):
-            image_embeds_cat = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-        else:
-            image_embeds_cat = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+        if image_embeds is not None:
+            if isinstance(image_embeds, (list, tuple)):
+                image_embeds_cat = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+            else:
+                image_embeds_cat = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
 
-        # Get image token mask for fusion
-        image_mask = (input_ids == model.config.image_token_id).unsqueeze(-1).expand_as(inputs_embeds)
-        inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds_cat)
+            # Get image token mask for fusion
+            image_mask = (input_ids == model.config.image_token_id).unsqueeze(-1).expand_as(inputs_embeds)
+            inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds_cat)
 
         # Get cache_position for attention mask creation
         cache_position = torch.arange(0, inputs_embeds.shape[1], device=inputs_embeds.device)
 
-        # Get position ids
+        # Get position ids (mm_token_type_ids required by transformers 5.x;
+        # zeros fallback = 26.1.0 campaign-patch semantics, kept verbatim for
+        # ladder comparability)
+        mm_token_type_ids = sample.get('mm_token_type_ids')
+        if mm_token_type_ids is None:
+            mm_token_type_ids = torch.zeros_like(input_ids)
         position_ids, rope_deltas = model.model.get_rope_index(
-            input_ids=input_ids, image_grid_thw=image_grid_thw, attention_mask=attention_mask
+            input_ids=input_ids,
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=image_grid_thw,
+            attention_mask=attention_mask,
         )
 
         # Expand position_ids if needed (3D format for mROPE)
@@ -358,11 +372,12 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
 
         # CRITICAL: Convert 2D attention_mask to 4D causal mask
         # This is what Qwen3VLMoeTextModel.forward does internally
+        # (transformers 5.14.1 renamed the kwarg: input_embeds -> inputs_embeds;
+        #  ported from the 26.1.0 campaign patch)
         causal_mask = create_causal_mask(
             config=model.config.text_config,
-            input_embeds=inputs_embeds,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache_position=cache_position,
             past_key_values=None,
             position_ids=text_position_ids,
         )
@@ -440,30 +455,119 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
         model.config.use_cache = need_kv_cache
         get_logger().info("KV cache %s", 'enabled' if need_kv_cache else 'disabled')
 
-    def get_adapter_config_for_subgraph(self) -> List[AdapterConfig]:
-        adapter_config = []
-        for layer_idx in range(
-            self.config.text_config.full_attention_interval - 1,
-            self.config.text_config.num_hidden_layers,
-            self.config.text_config.full_attention_interval,
-        ):
-            # Norm-Linear融合的映射配置：输入层归一化到QKV投影
-            norm_linear_mapping_config = MappingConfig(
-                source=f"model.language_model.layers.{layer_idx}.input_layernorm",  # 第一个LayerNorm
-                targets=[
-                    f"model.language_model.layers.{layer_idx}.self_attn.k_proj",
-                    f"model.language_model.layers.{layer_idx}.self_attn.q_proj",
-                    f"model.language_model.layers.{layer_idx}.self_attn.v_proj",
-                ],  # 注意力层的QKV投影
-            )
+    def _is_full_attention_layer(self, layer_idx: int) -> bool:
+        """Layer is full-attention iff idx % full_attention_interval == interval - 1.
 
-            # 为当前layer添加配置
+        Qwen3.6-27B: interval=4 -> layers 3,7,...,63 (16 FA), others GDN (48).
+        Mirrors the layer-type logic used in generate_model_forward.
+        """
+        interval = getattr(self.config.text_config, "full_attention_interval", 1)
+        if not interval or interval <= 0:
+            return True
+        return layer_idx % interval == interval - 1
+
+    def get_adapter_config_for_subgraph(self) -> List[AdapterConfig]:
+        """Flex-smooth (flex_awq_ssz / flex_smooth / iter_smooth) subgraph map.
+
+        W4A8 campaign adaptation (2026-10-30): full coverage of the hybrid
+        language tower --
+        - GDN layers (48): input_layernorm -> {in_proj_qkv, in_proj_z, in_proj_a,
+          in_proj_b} (a/b are FLOAT gates that consume the SAME normed hidden;
+          any norm rescale must be absorbed by all four consumers), no ov pair
+          (GDN recurrence is not rotation/scale equivariant), mlp up-down.
+        - Full-attn layers (16): standard qwen3_vl pattern (qkv norm-linear,
+          gate/up norm-linear, ov v->o, up-down).
+        MTP excluded (kept W8A8 by recipe).
+        """
+        adapter_config = []
+        prefix = "model.language_model"
+        for layer_idx in range(self.config.text_config.num_hidden_layers):
+            base = f"{prefix}.layers.{layer_idx}"
+            if self._is_full_attention_layer(layer_idx):
+                norm_linear_attn = MappingConfig(
+                    source=f"{base}.input_layernorm",
+                    targets=[
+                        f"{base}.self_attn.q_proj",
+                        f"{base}.self_attn.k_proj",
+                        f"{base}.self_attn.v_proj",
+                    ],
+                )
+                ov_mapping = MappingConfig(
+                    source=f"{base}.self_attn.v_proj",
+                    targets=[f"{base}.self_attn.o_proj"],
+                )
+                adapter_config.append(
+                    AdapterConfig(subgraph_type="ov", mapping=ov_mapping, extra_config={'group_method': 'max'})
+                )
+            else:
+                # GDN (gated delta net) linear-attention layer
+                norm_linear_attn = MappingConfig(
+                    source=f"{base}.input_layernorm",
+                    targets=[
+                        f"{base}.linear_attn.in_proj_qkv",
+                        f"{base}.linear_attn.in_proj_z",
+                        f"{base}.linear_attn.in_proj_a",
+                        f"{base}.linear_attn.in_proj_b",
+                    ],
+                )
+            norm_linear_mlp = MappingConfig(
+                source=f"{base}.post_attention_layernorm",
+                targets=[
+                    f"{base}.mlp.gate_proj",
+                    f"{base}.mlp.up_proj",
+                ],
+            )
+            up_down_mapping = MappingConfig(
+                source=f"{base}.mlp.up_proj",
+                targets=[f"{base}.mlp.down_proj"],
+            )
             adapter_config.extend(
                 [
-                    AdapterConfig(subgraph_type="norm-linear", mapping=norm_linear_mapping_config),
+                    AdapterConfig(subgraph_type="norm-linear", mapping=norm_linear_attn),
+                    AdapterConfig(subgraph_type="norm-linear", mapping=norm_linear_mlp),
+                    AdapterConfig(subgraph_type="up-down", mapping=up_down_mapping),
                 ]
             )
         return adapter_config
+
+    # ===== QuaRot interface (W4A8 campaign adaptation, 2026-10-30) =====
+    # Reference implementations: msmodelslim/model/qwen3 (dense pattern) and
+    # msmodelslim/model/qwen3_vl (VLM visual-merge handling).
+
+    def get_ln_fuse_map(self):
+        """RMSNorm fusion map for QuaRot.
+
+        Every norm on the rotated residual stream must be fused (weight baked
+        into the following linear, weight set to 1) because a per-channel
+        diagonal does NOT commute with the rotation. All hidden consumers are
+        listed, including the FLOAT GDN gates in_proj_a/in_proj_b.
+
+        MTP is deliberately NOT rotated/fused: it shares the main lm_head, so
+        its tail cannot be repaired by weight edits alone (known limitation:
+        do not enable MTP speculative decoding on QuaRot exports).
+        """
+        return {}, qwen3_5_get_ln_fuse_map(self.config.text_config)
+
+    def get_bake_names(self):
+        return [], []
+
+    def get_rotate_map(self, block_size):
+        """Rotation map for QuaRot.
+
+        Global Hadamard R (hidden_size) rotates the whole residual stream:
+        - pre_run: embed_tokens right-rot (stream enters rotated basis);
+          visual merger.linear_fc2 left-rot (image embeds join the rotated
+          stream; no deepstack mergers in this model).
+        - per FA layer: q/k/v right, o left (+head-dim H on the v->o pair);
+          gate/up right, down left.
+        - per GDN layer: in_proj_qkv/z/a/b right (a/b are FLOAT gates that
+          consume the rotated stream; exact bf16 transform), linear_attn.
+          out_proj left (FLOAT; maps GDN output back into rotated basis);
+          gate/up right, down left.
+        - lm_head right-rot (logits return to the original vocab basis).
+        """
+        pre_run, rot_pairs = qwen3_5_get_rotate_map(self.config.text_config, block_size)
+        return [pre_run], list(rot_pairs.values())
 
     @lru_cache(maxsize=1)
     def _get_weight_map(self) -> Dict[str, str]:
@@ -773,11 +877,13 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
         mtp_cache_position = torch.arange(0, seq_len, device=input_embeds_mtp.device)
         text_position_ids = mtp_position_ids[0]
         attention_mask = inputs.get('attention_mask').to('npu')
+        get_logger().info("mtp_preprocess: building MTP causal mask (transformers 5.14.1 signature)")
+        # transformers 5.14.1 renamed the kwarg (input_embeds -> inputs_embeds)
+        # and dropped cache_position; ported from the main-forward fix.
         causal_mask = create_causal_mask(
             config=self.config.text_config,
-            input_embeds=input_embeds_mtp,
+            inputs_embeds=input_embeds_mtp,
             attention_mask=attention_mask,
-            cache_position=mtp_cache_position,
             past_key_values=None,
             position_ids=text_position_ids,
         )
@@ -790,3 +896,99 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
             'past_key_values': None,
         }
         return pre_hidden_states, kwargs
+
+
+# ===== QuaRot helpers (W4A8 campaign adaptation, 2026-10-30) =====
+
+def _qwen3_5_is_full_attention(config, layer_idx: int) -> bool:
+    interval = getattr(config, "full_attention_interval", 1)
+    if not interval or interval <= 0:
+        return True
+    return layer_idx % interval == interval - 1
+
+
+def qwen3_5_get_ln_fuse_map(config):
+    """RMSNorm -> Linear fusion map for the qwen3_5 language tower (QuaRot)."""
+    ln_linear_map = {}
+    for layer_idx in range(config.num_hidden_layers):
+        base = f"model.language_model.layers.{layer_idx}"
+        if _qwen3_5_is_full_attention(config, layer_idx):
+            ln_linear_map[f"{base}.input_layernorm"] = [
+                f"{base}.self_attn.q_proj",
+                f"{base}.self_attn.k_proj",
+                f"{base}.self_attn.v_proj",
+            ]
+        else:
+            # GDN: all four projections consume the normed hidden; a/b are FLOAT
+            # gates but must absorb the norm scale to stay exact.
+            ln_linear_map[f"{base}.input_layernorm"] = [
+                f"{base}.linear_attn.in_proj_qkv",
+                f"{base}.linear_attn.in_proj_z",
+                f"{base}.linear_attn.in_proj_a",
+                f"{base}.linear_attn.in_proj_b",
+            ]
+        ln_linear_map[f"{base}.post_attention_layernorm"] = [
+            f"{base}.mlp.{proj}" for proj in ["gate_proj", "up_proj"]
+        ]
+    ln_linear_map["model.language_model.norm"] = ["lm_head"]
+    return ln_linear_map
+
+
+def qwen3_5_get_rotate_map(config, block_size):
+    """Rotation map for the qwen3_5 VLM (text tower + visual merge, QuaRot)."""
+    rot = QuaRotInterface.get_rotate_command(
+        size=config.hidden_size,
+        mode=QuaRotInterface.QuaRotMode.HADAMARD,
+        block_size=block_size,
+    )
+    head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+    rot_uv = QuaRotInterface.get_rotate_command(
+        size=head_dim,
+        mode=QuaRotInterface.QuaRotMode.BLOCK_HADAMARD_SHIFTED,
+        block_size=block_size,
+    )
+
+    # pre_run: embedding right-rot + visual merger left-rot (joins rotated stream)
+    left_rot = {}
+    right_rot = {}
+    right_rot["model.language_model.embed_tokens"] = rot
+    left_rot["model.visual.merger.linear_fc2"] = rot
+    pre_run = QuaRotInterface.RotatePair(left_rot=left_rot, right_rot=right_rot)
+
+    rot_pairs = {}
+    left_rot = {}
+    right_rot = {}
+    right_rot["lm_head"] = rot
+    for layer_idx in range(config.num_hidden_layers):
+        base = f"model.language_model.layers.{layer_idx}"
+        if _qwen3_5_is_full_attention(config, layer_idx):
+            right_rot[f"{base}.self_attn.q_proj"] = rot
+            right_rot[f"{base}.self_attn.k_proj"] = rot
+            right_rot[f"{base}.self_attn.v_proj"] = rot
+            left_rot[f"{base}.self_attn.o_proj"] = rot
+        else:
+            # GDN: qkv/z plus FLOAT gates a/b absorb the rotated input;
+            # FLOAT out_proj maps the GDN output back into the rotated stream.
+            right_rot[f"{base}.linear_attn.in_proj_qkv"] = rot
+            right_rot[f"{base}.linear_attn.in_proj_z"] = rot
+            right_rot[f"{base}.linear_attn.in_proj_a"] = rot
+            right_rot[f"{base}.linear_attn.in_proj_b"] = rot
+            left_rot[f"{base}.linear_attn.out_proj"] = rot
+        right_rot[f"{base}.mlp.gate_proj"] = rot
+        right_rot[f"{base}.mlp.up_proj"] = rot
+        left_rot[f"{base}.mlp.down_proj"] = rot
+    rot_pairs["rot"] = QuaRotInterface.RotatePair(left_rot=left_rot, right_rot=right_rot)
+
+    # head-dim Hadamard on the v->o pair (full-attn layers only: GDN recurrence
+    # is not head-rotation equivariant)
+    left_rot_uv = {}
+    right_rot_uv = {}
+    for layer_idx in range(config.num_hidden_layers):
+        if not _qwen3_5_is_full_attention(config, layer_idx):
+            continue
+        base = f"model.language_model.layers.{layer_idx}"
+        left_rot_uv[f"{base}.self_attn.v_proj"] = rot_uv
+        right_rot_uv[f"{base}.self_attn.o_proj"] = rot_uv
+    rot_pairs["rot_uv"] = QuaRotInterface.RotatePair(left_rot=left_rot_uv, right_rot=right_rot_uv)
+
+    return pre_run, rot_pairs

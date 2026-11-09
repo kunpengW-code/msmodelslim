@@ -76,7 +76,7 @@ def process_scale(name, bias, tp_num):
     @param tp_num: 推理时tp数
     @return: bias, fp32格式gmm算子所需的偏置量
     """
-    if any(char in name for char in ['up_proj', 'gate_proj', 'q_proj', 'k_proj', 'v_proj', 'w1', 'w3']):
+    if any(char in name for char in ['up_proj', 'gate_proj', 'q_proj', 'k_proj', 'v_proj', 'w1', 'w3', 'in_proj_qkv', 'in_proj_z']):
         up_bias = bias
         up_bias = 8 * up_bias.sum(dim=1, keepdim=True)
         bias = up_bias

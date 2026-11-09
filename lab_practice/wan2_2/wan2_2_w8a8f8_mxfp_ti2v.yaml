@@ -1,0 +1,60 @@
+# 量化配置
+apiversion: multimodal_sd_modelslim_v1
+metadata:
+  config_id: wan2_2_w8a8f8_mxfp_ti2v
+  score: 90
+  verified_tags:
+    Wan2.2-TI2V-5B:
+      - - MindIE-SD
+        - Atlas_350
+  label:
+    w_bit: 8
+    a_bit: 8
+    is_sparse: False
+    fa_quant: True
+spec:
+  process:
+    - type: "linear_quant"
+      qconfig:
+        act:
+          scope: "per_block"
+          dtype: "mxfp8"
+          symmetric: True
+          method: "minmax"
+        weight:
+          scope: "per_block"
+          dtype: "mxfp8"
+          symmetric: True
+          method: "minmax"
+      include:
+        - "*"
+    - type: "online_quarot"
+      include:
+        - "*.self_attn.*"
+    - type: "fa3_quant"
+      qconfig:
+        dtype: "fp8_e4m3"
+        scope: "per_token"
+        symmetric: True
+        method: "minmax"
+      include:
+        - "*self_attn"
+
+  dataset: wan2_2_ti2v
+
+  save:
+    - type: "mindie_format_saver"
+      part_file_size: 0
+
+  # 基础配置
+  multimodal_sd_config:
+    dump_config:
+      enable_dump: False
+      capture_mode: "args"
+      dump_data_dir: ""  # default is save_path
+    inference_config:
+      size: "1280*704"
+      frame_num: 81
+      sample_steps: 50
+      convert_model_dtype: True
+      task: "ti2v-5B"

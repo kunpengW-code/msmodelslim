@@ -1,0 +1,38 @@
+apiversion: modelslim_v1
+metadata:
+  config_id: minimax_m27_w8a8_mxfp8
+  score: 90
+  verified_tags:
+    MiniMax-M2.7:
+      - [vllm-ascend, Atlas_A5_Interface]
+  label:
+    w_bit: 8
+    a_bit: 8
+    is_sparse: False
+    kv_cache: False
+
+default_w8a8_mxfp8_dynamic: &default_w8a8_mxfp8_dynamic
+  act:
+    scope: "per_block"
+    dtype: "mxfp8"
+    symmetric: True
+    method: "minmax"
+  weight:
+    scope: "per_block"
+    dtype: "mxfp8"
+    symmetric: True
+    method: "minmax"
+
+spec:
+  process:
+    - type: "quarot"
+      export_extra_info: True
+    - type: "linear_quant"
+      qconfig: *default_w8a8_mxfp8_dynamic
+      include:
+        - "*block_sparse_moe.experts*"
+        - "*self_attn*"
+  dataset: mix_calib.jsonl
+  save:
+    - type: "ascendv1_saver"
+      part_file_size: 4

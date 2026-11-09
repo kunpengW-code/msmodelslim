@@ -1,0 +1,44 @@
+apiversion: modelslim_v1
+metadata:
+  config_id: glm4-7-moe-w8a8-v1
+  score: 90
+  verified_model_types:
+    - GLM-4.7
+  label:
+    w_bit: 8
+    a_bit: 8
+    is_sparse: False
+    kv_cache: False
+
+default_w8a8_dynamic: &default_w8a8_dynamic
+  act:
+    scope: "per_token"
+    dtype: "int8"
+    symmetric: True
+    method: "minmax"
+  weight:
+    scope: "per_channel"
+    dtype: "int8"
+    symmetric: True
+    method: "minmax"
+
+spec:
+  runner: "dp_layer_wise"
+  process:
+    - type: "flex_smooth_quant"
+      enable_subgraph_type:
+        - 'norm-linear'
+      include:
+        - "*"
+    - type: "group"
+      configs:
+        - type: "linear_quant"
+          qconfig: *default_w8a8_dynamic
+          include: ["*self_attn*"]
+        - type: "linear_quant"
+          qconfig: *default_w8a8_dynamic
+          include: ["*mlp.experts*"]
+
+  save:
+    - type: "ascendv1_saver"
+      part_file_size: 8

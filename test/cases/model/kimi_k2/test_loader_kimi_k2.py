@@ -1,0 +1,86 @@
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+
+import importlib
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+from msmodelslim.model.kimi_k2 import loader as target
+from msmodelslim.model.kimi_k2.loader import KimiK2AdapterLoader
+
+
+def test_kimi_k2_adapter_loader_given_class_when_inspected_then_inherits_from_base_loader():
+    from msmodelslim.model.plugin_factory.base_loader import BaseModelAdapterLoader
+
+    assert issubclass(KimiK2AdapterLoader, BaseModelAdapterLoader)
+
+
+def test_kimi_k2_adapter_loader_given_class_when_inspected_then_has_adapter_class_path_attribute():
+    assert hasattr(KimiK2AdapterLoader, "ADAPTER_CLASS_PATH")
+    assert target.KimiK2AdapterLoader.ADAPTER_CLASS_PATH == "msmodelslim.model.kimi_k2.model_adapter:KimiK2ModelAdapter"
+
+
+def test_kimi_k2_adapter_loader_given_class_path_format_when_inspected_then_contains_colon_separator():
+    assert ":" in KimiK2AdapterLoader.ADAPTER_CLASS_PATH
+    module_path, class_name = KimiK2AdapterLoader.ADAPTER_CLASS_PATH.split(":", 1)
+    assert module_path == "msmodelslim.model.kimi_k2.model_adapter"
+    assert class_name == "KimiK2ModelAdapter"
+
+
+def test_kimi_k2_adapter_loader_given_module_path_when_imported_then_resolves_to_model_adapter_module():
+    module_path, class_name = KimiK2AdapterLoader.ADAPTER_CLASS_PATH.split(":", 1)
+    adapter_module = importlib.import_module(module_path)
+    assert hasattr(adapter_module, class_name)
+    assert adapter_module.KimiK2ModelAdapter is not None
+
+
+def test_kimi_k2_adapter_loader_given_loader_instance_when_get_loader_requirements_called_then_return_dict():
+    loader = KimiK2AdapterLoader()
+    requirements = loader.get_loader_requirements()
+    assert isinstance(requirements, dict)
+
+
+def test_kimi_k2_adapter_loader_given_loader_instance_when_load_called_with_invalid_path_when_no_colon_then_raise():
+    from msmodelslim.utils.exception import UnsupportedError
+
+    class _BadLoader(KimiK2AdapterLoader):
+        ADAPTER_CLASS_PATH = "invalid_no_colon"
+
+    with pytest.raises(UnsupportedError):
+        _BadLoader().load("kimi_k2", Path("."))
+
+
+def test_kimi_k2_adapter_loader_given_loader_instance_when_load_called_then_import_adapter_class():
+    from msmodelslim.model.plugin_factory import base_loader
+
+    loader = KimiK2AdapterLoader()
+
+    fake_adapter_class = type(
+        "FakeAdapter",
+        (),
+        {
+            "__init__": lambda self, **kwargs: setattr(self, "kwargs", kwargs),
+        },
+    )
+
+    def fake_get_require_packages(obj):
+        return {}
+
+    with (
+        patch.object(base_loader, "get_require_packages", side_effect=fake_get_require_packages),
+        patch.object(base_loader, "import_module", return_value=SimpleNamespace(KimiK2ModelAdapter=fake_adapter_class)),
+        patch.object(loader, "check_requirements") as mock_check,
+    ):
+        out = loader.load("kimi_k2", Path("/tmp/model"), trust_remote_code=True)
+
+    assert isinstance(out, fake_adapter_class)
+    assert mock_check.called
+
+
+def test_kimi_k2_adapter_loader_given_loader_instance_when_precheck_called_then_skip_path_validation(monkeypatch):
+    loader = KimiK2AdapterLoader()
+    monkeypatch.setattr(loader, "check_requirements", lambda **kwargs: None)
+    loader.precheck("kimi_k2", Path("."))

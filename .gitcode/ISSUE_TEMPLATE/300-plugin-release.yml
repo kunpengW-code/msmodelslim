@@ -1,0 +1,193 @@
+# 模型支持插件发布 Issue 模板
+# 用于在社区登记并展示新插件发布信息。
+# 设计参考：主仓插件化 RFC https://gitcode.com/Ascend/msmodelslim/issues/42
+# 与现有模板格式一致：.gitcode/ISSUE_TEMPLATE/（见主仓 100/400/500 编号）
+
+name: 📦 Model Support Plugin Release
+description: 模型支持插件发布（申请发布/登记新模型适配器插件）
+title: "[Plugin]: "
+labels: ["plugin", "release"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 免责声明 / Disclaimer
+        **插件来源于社区第三方**，主仓仅提供登记与展示。请您**仔细甄别**后，确认在**安全、精度**等维度符合您的需求再使用。使用任何第三方插件所产生的风险由使用者自行承担。
+        **Plugins are from community third parties.** The main repository only provides registration and listing. Please **evaluate carefully** and ensure they meet your requirements in **security, accuracy**, etc. before use. Use of any third-party plugin is at your own risk.
+
+        ---
+        ## 模型支持插件发布说明
+        本模板用于在社区**登记并展示**你的插件发布信息，便于其他成员发现与选用。
+        请先阅读 [主仓插件化 RFC](https://gitcode.com/Ascend/msmodelslim/issues/42) 与 [插件开发总览](https://gitcode.com/rookie_hongchuan/msmodelslim-plugins/blob/master/docs/msmodelslim-plugin-system-guide.md)。
+        **Wheel 包为插件的最终发布形式**。因 Issue 中无法直接上传 wheel 文件，请先在 GitCode 等平台为仓库创建**发行版（Release）**并上传 wheel 附件，将得到的**下载链接**填入下方「Wheel 包」一栏。创建发行版方式见 [插件系统开发指南 - 在 GitCode 上创建发行版](https://gitcode.com/rookie_hongchuan/msmodelslim-plugins/blob/master/docs/msmodelslim-plugin-system-guide.md#25-在-gitcode-上创建发行版提供-wheel-下载链接)。
+
+  - type: input
+    id: plugin_name
+    attributes:
+      label: 插件名称 / Plugin name
+      description: 插件目录名或包名（如 minimax-2-5-w8a8、modelslim-plugin-minimax-2-5-w8a8）
+      placeholder: "例: minimax-2-5-w8a8"
+    validations:
+      required: true
+
+  - type: input
+    id: model_type
+    attributes:
+      label: 模型类型 / Model type
+      description: 适配的模型类型（与 entry point 中注册名称一致）
+      placeholder: "例: Minimax-2.5、Qwen3-8B"
+    validations:
+      required: true
+
+  - type: input
+    id: quant_type
+    attributes:
+      label: 量化类型 / Quantization type
+      description: 当前插件主要支持的量化类型
+      placeholder: "例: w8a8、w4a8"
+    validations:
+      required: true
+
+  - type: input
+    id: wheel_link
+    attributes:
+      label: Wheel 包下载链接 / Wheel package link（必填）
+      description: 请提供当前插件 Wheel 包的下载链接。因 Issue 无法上传附件，请先在 GitCode 仓库创建发行版（Release）并上传 wheel 文件，将发行版中附件的下载地址粘贴至此。
+      placeholder: "例: https://gitcode.com/xxx/msmodelslim-plugins/releases/download/v0.1.0/modelslim-plugin-minimax-2-5-w8a8-0.1.0-py3-none-any.whl"
+    validations:
+      required: true
+
+  - type: input
+    id: repo_or_link
+    attributes:
+      label: 代码/仓库链接 / Code or repo link（必填）
+      description: 请填写插件源码仓库链接，便于社区参考与协作
+      placeholder: "例: https://gitcode.com/xxx/msmodelslim-plugins 或 plugins/minimax-2-5-w8a8"
+    validations:
+      required: true
+
+  - type: textarea
+    id: usage_instructions
+    attributes:
+      label: 使用说明 / Usage instructions（必填）
+      description: 请说明如何安装与使用本插件，便于社区成员快速上手（如 pip install 命令、msmodelslim quant 示例、依赖与环境要求等）
+      placeholder: |
+        例：
+        1. 安装：pip install <包名>-*.whl 或从上述 wheel 链接下载后 pip install xxx.whl
+        2. 量化：msmodelslim quant --model_type "Minimax-2.5" --model_path /path/to/model ...
+        3. 其他注意事项（如 Python 版本、msmodelslim 版本要求等）
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: algorithm_support
+    attributes:
+      label: 算法支持自检 / Algorithm support checklist
+      description: 请勾选本插件已支持或集成的算法（可多选）
+      options:
+        - label: "QuaRot（异常值抑制，如 get_ln_fuse_map、get_rotate_map 等）"
+          required: false
+        - label: "Smooth / FlexSmoothQuant（含 norm-linear、OV、up-down 等子图）"
+          required: false
+        - label: "仅基础线性量化（无 QuaRot/Smooth）"
+          required: false
+        - label: "其他（请在下方「其他说明」中注明）"
+          required: false
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: "## 精度数据 / Accuracy data（请按实际验证情况勾选）"
+  - type: checkboxes
+    id: accuracy_dialogue
+    attributes:
+      label: 对话 / Dialogue
+      options:
+        - label: "单轮对话正常（Single-turn dialogue works）"
+          required: false
+    validations:
+      required: false
+  - type: checkboxes
+    id: simple_datasets
+    attributes:
+      label: 简单数据集（LLM）/ Simple datasets - LLM（精度标准相对 FP16 &lt;1%）
+      options:
+        - label: "GSM8K（&lt;1%）"
+          required: false
+        - label: "C-Eval（&lt;1%）"
+          required: false
+    validations:
+      required: false
+  - type: checkboxes
+    id: multimodal_datasets
+    attributes:
+      label: 多模态理解 / Multimodal understanding（精度标准相对 FP16 &lt;1%，可在下方「其他说明」中上传精度截图）
+      options:
+        - label: "TextVQA（&lt;1%）"
+          required: false
+        - label: "MMMU（&lt;1%）"
+          required: false
+        - label: "MMStar（&lt;1%）"
+          required: false
+    validations:
+      required: false
+  - type: checkboxes
+    id: complex_datasets
+    attributes:
+      label: 复杂数据集 / Complex datasets
+      options:
+        - label: "AIME 2024（2 题以内）"
+          required: false
+        - label: "AIME 2025（2 题以内）"
+          required: false
+        - label: "AIME 2026（2 题以内）"
+          required: false
+        - label: "GPQA（&lt;1%）"
+          required: false
+        - label: "LiveCodeBench（&lt;1%）"
+          required: false
+        - label: "BFCL-Simple（&lt;1%）"
+          required: false
+        - label: "Other（其他，请在「其他说明」中注明）"
+          required: false
+    validations:
+      required: false
+
+  - type: textarea
+    id: known_issues
+    attributes:
+      label: 已知问题 / Known issues（可选）
+      description: 请列出当前版本已知的问题、限制或注意事项，便于用户评估与规避
+      placeholder: "例：在 xxx 环境下可能出现 xxx；暂不支持 xxx 配置。"
+    validations:
+      required: false
+
+  - type: textarea
+    id: changelog
+    attributes:
+      label: Changelog / 版本变更历史（可选）
+      description: 请按版本简要记录变更历史，便于社区了解迭代内容
+      placeholder: |
+        例：
+        ## v0.1.0（当前）
+        - 初始版本，支持 Minimax-2.5 W8A8 量化。
+        ## v0.0.1
+        - 首次发布。
+    validations:
+      required: false
+
+  - type: textarea
+    id: optional_extra
+    attributes:
+      label: 其他说明 / Additional notes（可选）
+      description: 可选依赖（extra）、文档或示例链接等；多模态/LLM 精度截图可在此处附链接或说明。
+      placeholder: "例：README 已说明安装方式；精度截图见 xxx 链接。"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        感谢您为 msModelSlim 插件生态做出的贡献 🎉
+        Thank you for contributing to the msModelSlim plugin ecosystem 🎉

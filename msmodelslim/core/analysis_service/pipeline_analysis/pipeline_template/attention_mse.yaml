@@ -1,0 +1,6 @@
+process:
+  - type: binary_analysis
+    configs:
+      - type: fa3_quant
+    metrics: mse
+    patterns: ${patterns}

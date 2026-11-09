@@ -1,0 +1,4 @@
+process:
+  - type: unary_analysis
+    metrics: std
+    patterns: ${patterns}

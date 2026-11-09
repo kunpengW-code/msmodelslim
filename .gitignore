@@ -1,0 +1,10 @@
+*.pyc
+msmodelslim/config
+msmodelslim/lab_practice
+msmodelslim/lab_calib
+
+*.orig
+*.orig-*
+*.orig_*
+*.orig-wkp
+__pycache__/

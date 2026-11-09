@@ -1,0 +1,4 @@
+process:
+  - type: unary_analysis
+    metrics: quantile
+    patterns: ${patterns}

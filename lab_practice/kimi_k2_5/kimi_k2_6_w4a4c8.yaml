@@ -1,0 +1,82 @@
+apiversion: multimodal_vlm_modelslim_v1
+metadata:
+  config_id: kimi_k2_6_w4a4c8
+  score: 90
+  verified_tags:
+    Kimi-K2.6:
+      - - vLLM_Ascend
+        - Atlas_350
+  label:
+    w_bit: 4
+    a_bit: 4
+    is_sparse: False
+    kv_cache: True
+
+default_w8a8_mxfp: &default_w8a8_mxfp
+  act:
+    scope: "per_block"
+    dtype: "mxfp8"
+    symmetric: True
+    method: "minmax"
+  weight:
+    scope: "per_block"
+    dtype: "mxfp8"
+    symmetric: True
+    method: "minmax"
+
+default_w4a4_mxfp: &default_w4a4_mxfp
+  act:
+    scope: "per_block"
+    dtype: "mxfp4"
+    symmetric: True
+    method: "minmax"
+  weight:
+    scope: "per_block"
+    dtype: "mxfp4"
+    symmetric: True
+    method: "minmax"
+
+spec:
+  process:
+    - type: "group"
+      configs:
+        - type: "linear_quant"
+          qconfig: *default_w8a8_mxfp
+          include:
+            - "vision_tower.encoder.blocks.*.mlp*"
+            - "vision_tower.encoder.blocks.*.wqkv*"
+            - "vision_tower.encoder.blocks.*.wo*"
+            - "language_model.model.layers.0.mlp.*"
+            - "*self_attn*"
+          exclude:
+            - "*kv_b_proj*"
+        - type: "linear_quant"
+          qconfig: *default_w4a4_mxfp
+          include:
+            - "language_model.model.layers.*.mlp.*"
+          exclude:
+            - "language_model.model.layers.0.mlp.*"
+    - type: "fa3_quant"
+      details:
+        fa_q:
+          dtype: "fp8_e4m3"
+          scope: "per_token"
+          symmetric: True
+          method: "minmax"
+        fa_k:
+          dtype: "fp8_e4m3"
+          scope: "per_head"
+          symmetric: True
+          method: "minmax"
+        fa_v:
+          dtype: "fp8_e4m3"
+          scope: "per_head"
+          symmetric: True
+          method: "minmax"
+      include:
+        - "*"
+
+  dataset: calibImages
+  save:
+    - type: "ascendv1_saver"
+      part_file_size: 4

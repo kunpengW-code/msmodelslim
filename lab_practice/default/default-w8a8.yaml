@@ -1,0 +1,32 @@
+apiversion: modelslim_v1
+metadata:
+  config_id: default-w8a8
+  score: 50
+  verified_model_types: [ ]
+  label:
+    w_bit: 8
+    a_bit: 8
+    is_sparse: False
+    kv_cache: False
+spec:
+  process:
+    - type: "iter_smooth"
+      include:
+        - "*"
+    - type: "linear_quant"
+      qconfig:
+        act:
+          scope: "per_token"
+          dtype: "int8"
+          symmetric: True
+          method: "minmax"
+        weight:
+          scope: "per_channel"
+          dtype: "int8"
+          symmetric: True
+          method: "minmax"
+      include: [ "*" ]
+  runner: "model_wise"
+  save:
+    - type: "ascendv1_saver"
+      part_file_size: 4

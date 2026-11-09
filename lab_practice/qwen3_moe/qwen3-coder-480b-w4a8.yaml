@@ -1,0 +1,59 @@
+apiversion: modelslim_v1
+metadata:
+  config_id: qwen3-coder-480b-w4a8-v1
+  score: 90
+  verified_model_types:
+    - Qwen3-Coder-480B-A35B
+  label:
+    w_bit: 4
+    a_bit: 8
+    is_sparse: False
+    kv_cache: False
+
+default_w8a8_static: &default_w8a8_static
+  act:
+    scope: "per_tensor"
+    dtype: "int8"
+    symmetric: False
+    method: "minmax"
+  weight:
+    scope: "per_channel"
+    dtype: "int8"
+    symmetric: True
+    method: "minmax"
+
+default_w4a8_dynamic: &default_w4a8_dynamic
+  act:
+    scope: "per_token"
+    dtype: "int8"
+    symmetric: True
+    method: "minmax"
+  weight:
+    scope: "per_channel"
+    dtype: "int4"
+    symmetric: True
+    method: "ssz"
+
+spec:
+  process:
+    - type : "quarot"
+    - type: "flex_smooth_quant"
+      enable_subgraph_type:
+        - 'norm-linear'
+      include:
+        - "*"
+    - type: "group"
+      configs:
+        - type: "linear_quant"
+          qconfig: *default_w8a8_static
+          include: ["*self_attn*"]
+        - type: "linear_quant"
+          qconfig: *default_w4a8_dynamic
+          include: ["*mlp.experts*"]
+          exclude: ["model.layers.0.*", "model.layers.1.*", "model.layers.2.*", "model.layers.3.*", "model.layers.4.*", "model.layers.57.*", "model.layers.58.*", "model.layers.59.*", "model.layers.60.*", "model.layers.61.*"]
+
+  save:
+    - type: "ascendv1_saver"
+      part_file_size: 4
+  dataset: autocodebench.jsonl
+

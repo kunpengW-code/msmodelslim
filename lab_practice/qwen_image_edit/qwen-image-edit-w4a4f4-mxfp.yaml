@@ -1,0 +1,56 @@
+apiversion: multimodal_sd_modelslim_v1
+
+metadata:
+  config_id: qwen-image-edit-w4a4f4-mxfp
+  score: 90
+  verified_tags:
+    Qwen-Image-Edit-2509:
+      - - MindIE-SD
+        - Atlas_350
+  label:
+    w_bit: 4
+    a_bit: 4
+    is_sparse: False
+    fa_quant: True
+
+default_w4a4_dynamic: &default_w4a4_dynamic
+  act:
+    scope: "dual_scale"
+    dtype: "mxfp4"
+    symmetric: True
+    method: "dualscale"
+    ext:
+      dual_block_size: 512
+  weight:
+    scope: "dual_scale"
+    dtype: "mxfp4"
+    symmetric: True
+    method: "dualscale"
+    ext:
+      dual_block_size: 512
+
+spec:
+  process:
+    - type: "linear_quant"
+      qconfig: *default_w4a4_dynamic
+      exclude: ['*txt_mlp.net.2*', '*img_mod.1*', '*txt_mod.1*']
+    - type: "online_quarot"
+      include:
+        - "*"
+    - type: "fa3_quant"
+      qconfig:
+        dtype: "mxfp4"
+        scope: "per_block"
+        symmetric: True
+        method: "minmax"
+      include:
+        - "*"
+  save:
+    - type: "mindie_format_saver"
+      part_file_size: 0
+  multimodal_sd_config:
+    dump_config:
+      enable_dump: False
+    model_config:
+      img_paths: ""
+      prompt_file: ""

@@ -1,0 +1,32 @@
+apiversion: multimodal_vlm_modelslim_v1
+metadata:
+  config_id: qwen2.5-vl-7b-w8a8
+  score: 90
+  label:
+    w_bit: 8
+    a_bit: 8
+    is_sparse: False
+    kv_cache: False
+
+spec:
+  process:
+    - type: "linear_quant"
+      qconfig:
+        act:
+          scope: "per_tensor"   # default is per_tensor
+          dtype: "int8"         # default is int8
+          symmetric: False      # default is True
+          method: "minmax"      # default is minmax
+        weight:
+          scope: "per_channel"  # default is per_channel
+          dtype: "int8"         # default is int8
+          symmetric: True       # default is True
+          method: "minmax"      # default is minmax
+      include:
+        - "*"
+
+  save:
+    - type: "ascendv1_saver"
+      part_file_size: 4
+  dataset: "calibImages"
+  default_text: "Describe this image in detail."

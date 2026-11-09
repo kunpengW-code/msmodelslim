@@ -1,0 +1,105 @@
+# 专家经验配置文件，用于管理量化策略的专家经验规则
+
+# 支持的量化类型
+supported_quant_types:
+  - "w8a8"
+  - "w4a8"
+
+# 预定义的量化配置模板（qconfig）
+quantization_configs:
+  w8a8_default:
+    act:
+      scope: "per_tensor"
+      dtype: "int8"
+      symmetric: true
+      method: "minmax"
+    weight:
+      scope: "per_channel"
+      dtype: "int8"
+      symmetric: true
+      method: "minmax"
+  
+  w8a8_dynamic:
+    act:
+      scope: "per_token"
+      dtype: "int8"
+      symmetric: true
+      method: "minmax"
+    weight:
+      scope: "per_channel"
+      dtype: "int8"
+      symmetric: true
+      method: "minmax"
+  
+  w4a8_dynamic:
+    act:
+      scope: "per_token"
+      dtype: "int8"
+      symmetric: true
+      method: "minmax"
+    weight:
+      scope: "per_channel"
+      dtype: "int4"
+      symmetric: true
+      method: "ssz"
+
+# 预定义的离群值抑制策略模板
+anti_outlier_strategies:
+  flex_smooth_quant_default:
+    type: "flex_smooth_quant"
+
+  iter_smooth_default:
+    type: "iter_smooth"
+  
+  flex_awq_ssz_default:
+    type: "flex_awq_ssz"
+    qconfig:
+      act:
+        scope: "per_token"
+        dtype: "int8"
+        symmetric: true
+        method: "minmax"
+      weight:
+        scope: "per_channel"
+        dtype: "int4"
+        symmetric: true
+        method: "ssz"
+        ext:
+          step: 10
+    enable_subgraph_type:
+      - "norm-linear"
+      - "linear-linear"
+      - "ov"
+      - "up-down"
+  
+  quarot_default:
+    type: "quarot"
+
+quantization_mapping:
+  w8a8:
+    anti_outlier_strategies:
+      - "flex_smooth_quant_default"
+      - "iter_smooth_default"
+    
+    structure_qconfig_mapping:
+      MHA: "w8a8_default"
+      GQA: "w8a8_default"
+      MLA: "w8a8_default"
+      FFN: "w8a8_dynamic"
+      MoE: "w8a8_dynamic"
+      DSA: "bf16"
+      SWA: "bf16"
+      GatedDeltaNet: "bf16"
+  
+  w4a8:
+    anti_outlier_strategies:
+      - "flex_awq_ssz_default"
+    
+    structure_qconfig_mapping:
+      MHA: "w8a8_default"
+      GQA: "w8a8_default"
+      MLA: "w8a8_default"
+      MoE: "w4a8_dynamic"
+      DSA: "bf16"
+      SWA: "bf16"
+      GatedDeltaNet: "bf16"

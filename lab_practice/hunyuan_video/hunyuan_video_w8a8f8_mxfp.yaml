@@ -1,0 +1,60 @@
+# 量化配置
+apiversion: multimodal_sd_modelslim_v1
+metadata:
+  config_id: hunyuan_video_w8a8f8_mxfp
+  score: 90
+  verified_tags:
+    HunyuanVideo:
+      - - MindIE-SD
+        - Atlas_350
+  label:
+    w_bit: 8
+    a_bit: 8
+    is_sparse: False
+    fa_quant: True
+
+spec:
+  process:
+    - type: "linear_quant"
+      qconfig:
+        act:
+          scope: "per_block"
+          dtype: "mxfp8"
+          symmetric: True
+          method: "minmax"
+        weight:
+          scope: "per_block"
+          dtype: "mxfp8"
+          symmetric: True
+          method: "minmax"
+      include:
+        - "*"
+      exclude:
+        - "*mod*"
+    - type: "online_quarot"
+      include: ["*"]
+    - type: "fa3_quant"
+      qconfig:
+        dtype: "fp8_e4m3"
+        scope: "per_token"
+        symmetric: True
+        method: "minmax"
+      include:
+        - "*"
+
+  dataset: hunyuanvideo
+
+  save:
+    - type: "mindie_format_saver"
+      part_file_size: 0
+
+  # 基础配置
+  multimodal_sd_config:
+    dump_config:
+      enable_dump: False
+      capture_mode: "args"
+      dump_data_dir: ""  # default is save_path
+    inference_config:
+      model_resolution: "720p"
+      video_size: [720, 1280]
+      infer_steps: 50

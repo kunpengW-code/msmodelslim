@@ -1,0 +1,18 @@
+process:
+  - type: binary_operator_layer_wise
+    quant_modules: ${quant_modules}
+    configs:
+      - type: linear_quant
+        qconfig:
+          act:
+            scope: per_block
+            dtype: mxfp4
+            symmetric: true
+            method: minmax
+          weight:
+            scope: per_block
+            dtype: mxfp4
+            symmetric: true
+            method: minmax
+        include: ${quant_modules}
+    metrics: mse_layer_wise

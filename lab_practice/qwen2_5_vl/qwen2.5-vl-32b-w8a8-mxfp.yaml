@@ -1,0 +1,40 @@
+apiversion: multimodal_vlm_modelslim_v1
+metadata:
+  config_id: qwen2.5-vl-32b-w8a8-mxfp8
+  score: 90
+  verified_tags:
+    Qwen2.5-VL-32B-Instruct:
+      - - vLLM_Ascend
+        - Atlas_350
+  label:
+    w_bit: 8
+    a_bit: 8
+    is_sparse: False
+    kv_cache: False
+
+default_mxfp8: &default_mxfp8
+  act:
+    scope: "per_block"   # default is per_tensor
+    dtype: "mxfp8"        # default is int8
+    symmetric: True      # default is True
+    method: "minmax"      # default is minmax
+  weight:
+    scope: "per_block"   # default is per_channel
+    dtype: "mxfp8"        # default is int8
+    symmetric: True       # default is True
+    method: "minmax"      # default is minmax
+
+spec:
+  process:
+    - type: "linear_quant"
+      qconfig: *default_mxfp8
+      include:
+        - "*"
+      exclude:
+        - "*merger*"
+        - "*visual*down*"
+  save:
+    - type: "ascendv1_saver"
+      part_file_size: 4
+  dataset: "calibImages"  # Short name: auto-searches in lab_calib/
+  default_text: "Describe this image in detail."

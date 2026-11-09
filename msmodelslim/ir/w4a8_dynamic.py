@@ -63,4 +63,4 @@ class W4A8DynamicFakeQuantLinear(AutoFakeQuantLinear):
         w_q_param = QParam(scheme=QScheme(scope=QScope.PER_CHANNEL, dtype=QDType.INT4, symmetric=True),
                            ext={"scale": self.weight_scale.data})
         weight_q_dq = dequantize(QStorage(dtype=QDType.INT4, value=self.weight.data).T, w_q_param).T
-        return F.linear(x_q_dq.value.reshape(x_shape), weight_q_dq.value, self.bias)
+        return F.linear(x_q_dq.value.reshape(x_shape), weight_q_dq.value, self.bias).to(x.dtype)

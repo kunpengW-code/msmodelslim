@@ -67,7 +67,7 @@ class W8A8DynamicPerChannelFakeQuantLinear(AutoFakeQuantLinear):
         w_q_param = QParam(scheme=QScheme(scope=QScope.PER_CHANNEL, dtype=QDType.INT8, symmetric=True),
                            ext={"scale": self.weight_scale.data})
         weight_q_dq = dequantize(QStorage(dtype=QDType.INT8, value=self.weight.data).T, w_q_param).T
-        return F.linear(x_q_dq.value.reshape(x_shape), weight_q_dq.value, self.bias)
+        return F.linear(x_q_dq.value.reshape(x_shape), weight_q_dq.value, self.bias).to(x.dtype)
 
 
 @QABCRegistry.multi_register(
@@ -115,4 +115,4 @@ class W8A8DynamicPerGroupFakeQuantLinear(AutoFakeQuantLinear):
         )
         w_q_storage = QStorage(dtype=QDType.INT8, value=self.weight)
         weight_q_dq = dequantize(w_q_storage, w_q_param)
-        return F.linear(x_q_dq.value.reshape(x_shape), weight_q_dq.value, self.bias)
+        return F.linear(x_q_dq.value.reshape(x_shape), weight_q_dq.value, self.bias).to(x.dtype)

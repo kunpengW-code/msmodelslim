@@ -111,7 +111,7 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
             torch_dtype="auto",
             local_files_only=True,
             device_map="cpu",  # All on CPU for now
-            attn_implementation='eager',  # Required: prevents KeyError when accessing ALL_ATTENTION_FUNCTIONS
+            attn_implementation='sdpa',  # Required: prevents KeyError when accessing ALL_ATTENTION_FUNCTIONS
         ).eval()
 
     def get_model_pedigree(self) -> str:
@@ -249,7 +249,7 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
 
         # Ensure _attn_implementation is set for dynamically loaded layers
         # This prevents KeyError when layers access ALL_ATTENTION_FUNCTIONS[config._attn_implementation]
-        self.config.text_config._attn_implementation = 'eager'
+        self.config.text_config._attn_implementation = 'sdpa'
 
         # CRITICAL: Copy text_config attention heads to model.config for OV smoothing
         # BaseSmoothProcessor._apply_standard_ov_smooth() reads from model.config, not model.config.text_config

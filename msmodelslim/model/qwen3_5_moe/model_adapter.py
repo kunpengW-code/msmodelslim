@@ -858,9 +858,10 @@ class Qwen3_5ModelAdapter(  # pylint: disable=too-many-ancestors
 
         pre_hidden_states = hidden_states.to('npu')
 
-        # 1. Norm + LM head only for next-token prediction (last position)
-        normed_hidden = wrap_device(model.model.language_model.norm)(pre_hidden_states)
-        logits = wrap_device(model.lm_head)(normed_hidden).float()
+        # 1. Norm + LM head ONLY at the last position (full-seq logits would
+        #    materialize [1, L, vocab] fp32 and OOM on long calib samples)
+        normed_last = wrap_device(model.model.language_model.norm)(pre_hidden_states[:, -1:, :])
+        logits = wrap_device(model.lm_head)(normed_last).float()
 
         # 2. Shift input_ids and set last position to predicted token
         input_ids = inputs['input_ids'].to('npu')

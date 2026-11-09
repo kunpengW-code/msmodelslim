@@ -69,6 +69,29 @@ def apply_smooth_scale_shift(
         layer.bias.add_(shift)
 
 
+
+
+_ZERO_CENTERED_NORM_CLASSES = ('Qwen3_5RMSNorm', 'GemmaRMSNorm', 'Qwen3NextRMSNorm')
+
+
+def _is_zero_centered_norm(ln) -> bool:
+    """True if the norm computes x/rms * (1 + weight) instead of x/rms * weight."""
+    import os
+    if os.environ.get('MSMODELZERO_CENTERED_NORM', '').strip().lower() in ('1', 'true', 'yes'):
+        return True
+    if type(ln).__name__ in _ZERO_CENTERED_NORM_CLASSES:
+        return True
+    try:
+        import inspect
+        src = inspect.getsource(type(ln).forward)
+        if '1.0 + self.weight' in src or '1 + self.weight' in src:
+            return True
+    except (OSError, TypeError):
+        pass
+    return False
+
+
+
 class SubgraphFusionStrategy(ABC): 
     @abstractmethod
     def apply_fusion(
@@ -195,9 +218,16 @@ class NormLinearSubgraphFusion(SubgraphFusionStrategy):
         # Note: norm layer doesn't have a name field in the subgraph, so we pass None
         if getattr(subgraph.norm, "bias", None) is not None:
             subgraph.norm.bias.mul_(1.0 / scales_tensor)
-        apply_smooth_scale_shift(
-            subgraph.norm, (1.0 / scales_tensor).squeeze(), norm_shift, None
-        )
+        inv = (1.0 / scales_tensor).squeeze()
+        if _is_zero_centered_norm(subgraph.norm):
+            # zero-centered RMSNorm (Qwen3.6): effective multiplier is (1+w);
+            # scaling by inv requires w -> (1+w)*inv - 1, not w*inv.
+            with torch.no_grad():
+                subgraph.norm.weight.data.add_(1.0)
+                apply_smooth_scale_shift(subgraph.norm, inv, norm_shift, None)
+                subgraph.norm.weight.data.sub_(1.0)
+        else:
+            apply_smooth_scale_shift(subgraph.norm, inv, norm_shift, None)
 
 
 class NonFusionSubgraphFusion(SubgraphFusionStrategy):

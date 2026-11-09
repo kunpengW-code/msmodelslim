@@ -161,6 +161,36 @@ def rotate_weight(weight: torch.Tensor,
         weight.data = torch.matmul(rot.T.to(weight_data), weight_data).to(dtype=dtype)
 
 
+
+
+_ZERO_CENTERED_NORM_CLASSES = ('Qwen3_5RMSNorm', 'GemmaRMSNorm', 'Qwen3NextRMSNorm')
+
+
+def _is_zero_centered_norm(ln) -> bool:
+    """True if the norm computes x/rms * (1 + weight) instead of x/rms * weight."""
+    import os
+    if os.environ.get('MSMODELZERO_CENTERED_NORM', '').strip().lower() in ('1', 'true', 'yes'):
+        return True
+    if type(ln).__name__ in _ZERO_CENTERED_NORM_CLASSES:
+        return True
+    try:
+        import inspect
+        src = inspect.getsource(type(ln).forward)
+        if '1.0 + self.weight' in src or '1 + self.weight' in src:
+            return True
+    except (OSError, TypeError):
+        pass
+    return False
+
+
+def _effective_norm_weight(ln):
+    """Per-channel multiplier actually applied by the norm to its normalized input."""
+    w = ln.weight.data
+    if _is_zero_centered_norm(ln):
+        return 1.0 + w
+    return w
+
+
 def fuse_ln_linear(layernorms: List[torch.nn.Module], linear_layers: List[torch.nn.Linear]) -> None:
     ln_data = []
     ln_bias_data = []
@@ -170,7 +200,7 @@ def fuse_ln_linear(layernorms: List[torch.nn.Module], linear_layers: List[torch.
         if ln.weight.dim() != 1:
             raise UnsupportedError("layernorm type is not supported! quarot rotate only support RMSNorm!",
                                 action="Please check the model's layernorm type!")
-        ln_data.append(ln.weight.data)
+        ln_data.append(_effective_norm_weight(ln))
     ln_weight = torch.concat(ln_data, dim=0) if len(ln_data) > 1 else ln_data[0]
     ln_weight = ln_weight.to(dtype=GLOBAL_DTYPE)
     ln_bias = torch.concat(ln_bias_data, dim=0).to(dtype=GLOBAL_DTYPE) if len(ln_bias_data) > 1 else None
@@ -189,7 +219,7 @@ def fuse_ln_linear(layernorms: List[torch.nn.Module], linear_layers: List[torch.
                                                                 ln_bias.to(device=current_weight.device))
             linear.bias.data = linear.bias.data.to(linear_dtype)
     for ln in layernorms:
-        ln.weight.data.fill_(1.0)
+        ln.weight.data.fill_(0.0 if _is_zero_centered_norm(ln) else 1.0)
         if hasattr(ln, 'bias'):
             ln.bias.data.fill_(0.0)
 
